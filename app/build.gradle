@@ -1,0 +1,39 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'org.opendisplay.legacy'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "org.opendisplay.legacy"
+        minSdk 23              // Android 6.0 Marshmallow
+        targetSdk 34
+        versionCode 1
+        versionName "0.1.0-legacy"
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    // lint 报错不阻断构建（老项目在 lint 上容易有噪音）
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
+    }
+}
+
+// 零外部依赖：org.json / MediaCodec / NsdManager 全是 Android 内置的。
+// 这是本项目的核心取舍 —— 不引入 AndroidX/Kotlin/Compose，
+// 才能在 API 23 上编译通过，也让 CI 构建只需要拉 SDK、不需要拉任何库。
+dependencies {
+}
