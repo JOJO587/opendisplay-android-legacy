@@ -211,6 +211,11 @@ public class MainActivity extends Activity
         }
 
         send(Protocol.touch(phase, nx, ny, System.currentTimeMillis()));
+        // began/ended 一次点击各一条，不刷屏；moved 才是高频不记。
+        // 用于回访验证触摸链路（logcat -s ODMain）。
+        if (!"moved".equals(phase)) {
+            Log.i(TAG, "touch " + phase + " " + nx + "," + ny);
+        }
         return true;
     }
 
@@ -282,8 +287,18 @@ public class MainActivity extends Activity
     @Override
     public void onStatus(String text) {
         lastStatus = text;
-        connected = text.contains("已连接");
-        if (!connected) {
+    }
+
+    /**
+     * 显式连接回调（根因修复：之前 connected 从状态文本 contains("已连接") 反推，
+     * 而 welcome 分支发出的"Mac 已握手 (pv=3)"不含"已连接"，导致 connected 被
+     * 打回 false，onTouch 里 if(!connected) 把所有单击/滚动静默吞掉——
+     * 这正是 jsonString 修好后点击反而失效的根因）。
+     */
+    @Override
+    public void onConnectionChanged(boolean c) {
+        connected = c;
+        if (!c) {
             runOnUiThread(() -> cursorOverlay.hideCursor());
         }
     }

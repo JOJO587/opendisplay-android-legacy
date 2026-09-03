@@ -66,14 +66,21 @@ public class ReceiverService extends Service {
     private String stableId;
     private volatile boolean wifiDiscovery = false; // 默认 ADB 优先
 
-    /** 由 Activity 在 surface 就绪时注入 */
-    private static H264Decoder decoder;
-    private static StatusCallback statusCb;
+    /** 由 Activity 在 surface 就绪时注入（UI 线程写、网络线程读，须 volatile） */
+    private static volatile H264Decoder decoder;
+    private static volatile StatusCallback statusCb;
 
     public interface StatusCallback {
         void onStatus(String text);
 
         void onSurfaceNeeded();
+
+        /**
+         * 连接状态变化（显式回调，替代"解析状态文本"的脆弱做法）。
+         * true = 新连接握手完成（hello 已发出）；false = 当前连接已断开。
+         * 注意：旧连接被新连接顶掉时，旧 readLoop 退出不会触发 false（见 readLoop）。
+         */
+        void onConnectionChanged(boolean connected);
 
         /** 收到 cursor 消息：visible 是否可见，x/y 归一化 0..1（左上原点） */
         void onCursor(boolean visible, float x, float y);
@@ -85,6 +92,13 @@ public class ReceiverService extends Service {
     public static void attach(H264Decoder d, StatusCallback cb) {
         decoder = d;
         statusCb = cb;
+        // 晚绑定同步：Activity 重建而服务已保持连接时（START_STICKY / 重开应用），
+        // 不会有新的 adopt 事件，必须在这里把现有连接状态同步给新回调，
+        // 否则 connected 停在 false，触摸又被吞——和本次修的根因同型
+        Socket s = controlSocket;
+        if (cb != null && s != null && !s.isClosed()) {
+            cb.onConnectionChanged(true);
+        }
     }
 
     public static void detach() {
@@ -183,9 +197,15 @@ public class ReceiverService extends Service {
         } catch (Exception ignored) {
         }
 
-        Socket old = current;
-        current = s;
-        controlSocket = s;
+        Socket old;
+        synchronized (this) {
+            // current 的所有读改都走 this 锁：readLoop finally 的清理与
+            // 新连接的注册互斥，避免"检查 s==current 后被 adopt 抢先"
+            // 的 check-then-act 竞态清掉新连接
+            old = current;
+            current = s;
+            controlSocket = s;
+        }
         if (old != null) {
             try {
                 old.close();
@@ -203,13 +223,22 @@ public class ReceiverService extends Service {
         startPingLoop(s);
         status("已连接: " + s.getRemoteSocketAddress());
         updateNotification("已连接 " + s.getRemoteSocketAddress());
+        // 显式连接回调：触摸/滚动转发依赖它，不能用状态文本反推
+        if (statusCb != null) statusCb.onConnectionChanged(true);
     }
 
     /** hello 必须是连接后第一条消息（规范 6.1） */
     private void sendHello(OutputStream out) throws IOException {
-        DisplayMetrics dm = getResources().getDisplayMetrics();
-        int w = dm.widthPixels;
-        int h = dm.heightPixels;
+        // 用真实物理分辨率（含系统栏区域）。getDisplayMetrics() 会扣掉导航栏，
+        // 导致上报比面板少一截（如 1920 → 1836）。Mac 端 VirtualDisplay 的
+        // 模式列表只有 hello 报的这一档，且每 2s 强制切回（selectHiDPIMode），
+        // 所以"用户想要最高分辨率" = 这里必须报面板物理上限。
+        DisplayMetrics dm = new DisplayMetrics();
+        getWindowManager().getDefaultDisplay().getRealMetrics(dm);
+        // hello 语义：pixelsWide 是横屏长边（MacSender 注释），旋转无关，
+        // 统一取长/短边归一化
+        int w = Math.max(dm.widthPixels, dm.heightPixels);
+        int h = Math.min(dm.widthPixels, dm.heightPixels);
         float scale = dm.density;
 
         // 分辨率上限不在代码里写死：直接上报面板完整原生分辨率，
@@ -257,18 +286,35 @@ public class ReceiverService extends Service {
             if (alive) Log.w(TAG, "read loop ended", e);
         } finally {
             Log.i(TAG, "connection closed");
-            status("连接断开，等待重连…");
-            updateNotification("等待 Mac 连接…");
+            // 只对"当前"连接负责清理与通知。若已被新连接顶掉（s != current），
+            // 新连接的 adopt 会发 true，这里什么都不能发。
+            // 与 adopt/stopListening 同锁，保证检查+清理原子。
+            boolean wasCurrent;
+            synchronized (this) {
+                wasCurrent = (s == current);
+                if (wasCurrent) {
+                    // 必须关闭并清空：否则死 socket 的 isClosed() 仍为 false，
+                    // Activity 重建时 attach() 的同步检查会误报"已连接"，
+                    // UI 永久卡在 connected=true（触摸被吞）+ fd 泄漏
+                    current = null;
+                    controlSocket = null;
+                }
+            }
+            if (wasCurrent) {
+                try {
+                    s.close();
+                } catch (IOException ignored) {
+                }
+                status("连接断开，等待重连…");
+                updateNotification("等待 Mac 连接…");
+                if (statusCb != null) statusCb.onConnectionChanged(false);
+            }
         }
     }
 
     private void handleControl(String json) {
         String type = Protocol.jsonType(json);
         if (type == null) return; // 不可解析的消息按规范应忽略
-
-        // 调试：把每一个收到的控制消息类型都打到 logcat（tag ODService），
-        // 用来确认 Mac 到底有没有发 cursor / cursorImg。验证完光标后可删。
-        Log.i(TAG, "ctrl: " + type);
 
         // 规范 section 6：未知 type 必须忽略，不能当错误处理
         if ("welcome".equals(type)) {
@@ -290,12 +336,10 @@ public class ReceiverService extends Service {
             boolean visible = v != null && v != 0.0;
             float fx = x == null ? 0f : x.floatValue();
             float fy = y == null ? 0f : y.floatValue();
-            Log.i(TAG, "cursor v=" + visible + " x=" + fx + " y=" + fy);
             if (statusCb != null) statusCb.onCursor(visible, fx, fy);
         } else if ("cursorImg".equals(type)) {
             // 光标位图（规范 section 6：png 为 base64，nw/nh/ax/ay 归一化）
             String pngB64 = Protocol.jsonString(json, "png");
-            Log.i(TAG, "cursorImg pngLen=" + (pngB64 == null ? -1 : pngB64.length()));
             if (pngB64 != null && statusCb != null) {
                 Double nw = Protocol.jsonNumber(json, "nw");
                 Double nh = Protocol.jsonNumber(json, "nh");
@@ -394,18 +438,28 @@ public class ReceiverService extends Service {
     // ---------------------------------------------------------------- 杂项
 
     private void stopListening() {
+        alive = false;
+        // 与 adopt/readLoop finally 同锁：先清 current 再关 socket，
+        // readLoop 的 finally 会看到 s != current，不会误发 false，
+        // 改由本方法末尾显式通知一次
+        Socket cur;
+        synchronized (this) {
+            cur = current;
+            current = null;
+        }
         controlSocket = null;
         try {
             if (serverSocket != null) serverSocket.close();
         } catch (IOException ignored) {
         }
         try {
-            if (current != null) current.close();
+            if (cur != null) cur.close(); // 关 socket 才能解阻塞卡在 read() 的读线程
         } catch (IOException ignored) {
         }
         if (acceptThread != null) acceptThread.interrupt();
         if (readThread != null) readThread.interrupt();
         if (pingThread != null) pingThread.interrupt();
+        if (statusCb != null) statusCb.onConnectionChanged(false);
     }
 
     private void status(String text) {

@@ -3,63 +3,57 @@
 > 用户（Jony）明确要求把已发现的问题记成**待办**、后续有空再迭代。
 > 每条记录带「现象 / 已核实的代码事实 / 诊断方向」，方便下次直接续上，不重复排查。
 >
-> 当前基线：commit `a123a29`（jsonString 根因修复 + 去分辨率上限），光标已能显示。
+> 当前基线：commit `5f093c6` 之后的修复改动（见下方"已修复待验证"）。
 > 复现路径：ADB/USB `adb forward tcp:9000 tcp:9000` → Mac `Extending to Android`。
 > 每次改动走：Superpowers 流程 → 用户确认 → push → GitHub Actions 编译 → 真机验证。
 
 ---
 
-## 待办 1 — 单击/双击手势失效（本次装新版后回归）
+## 待办 1 — 单击/双击手势失效（回归）✅ 已修复（2026-09-04 凌晨，待真机验证）
 
-**状态**：🟡 待办（未修，用户要求后续迭代）
+**根因（铁证闭环）**：`MainActivity.onStatus` 用 `connected = text.contains("已连接")` 从
+状态文本反推连接状态。jsonString 修复后 `welcome` 分支第一次真正跑起来，它发出的
+"Mac 已握手 (pv=3)"不含"已连接"→ `connected` 被打回 false → `onTouch` 的
+`if (!connected) return true;` 把**所有单指 touch（点击）和双指 scroll 静默吞掉**。
+时间线完美对上：7ea1b84（jsonType 坏→welcome 分支死→connected 保持 true→点击正常）；
+a123a29（jsonType 修好→welcome 分支活→connected 变 false→点击死、光标活）。
+上游 MacSender.swift 的 `case "touch"` **没有任何 pv 门槛**（此前"PV 3→2 导致触控失效"
+的假设被证伪）。
 
-### 现象
-- 上上版（UX 修复版，光标未显示时）**单击/双击正常**。
-- 本次装上光标修复版（`a123a29`）后，**单指单击 / 双击在 Mac 端无响应**。
-- 双指滚动、三指菜单、全屏、退出、光标显示均正常（用户只报了单击/双击失效）。
+**修复**：
+- `StatusCallback` 新增显式回调 `onConnectionChanged(boolean)`，替代文本反推：
+  - `adopt()` 连接建立后发 `true`
+  - `readLoop` finally 仅当 `s == current`（同 `this` 锁保证检查+清理原子）时清理死
+    socket（close + 清 current/controlSocket，防 fd 泄漏）并发 `false`
+  - `stopListening()` 显式发 `false`
+  - `attach()` 晚绑定时若 `controlSocket` 仍活跃则同步发 `true`（Activity 重建场景）
+- `statusCb`/`decoder` 补 volatile（UI 线程写、网络线程读）
+- `MainActivity.onConnectionChanged` 接管 `connected`；`onStatus` 只留显示文本
+- 附带修复：独立审查发现的 wedge 路径（EOF 后死 socket 不清理 → Activity 重建时
+  attach() 对死连接误报 true → UI 永久 connected=true 触摸被吞）
+- 验证手段：新 APK 装后 `adb logcat -s ODMain` 应见 `touch began/ended`；
+  真机点击 pad 应触发 Mac 点击
 
-### 已核实的代码事实（本次读取）
-- 触摸逻辑**没被本次改动动过**：`MainActivity.onTouch`（L178）仍完整存在，挂载在 `surfaceView.setOnTouchListener(this::onTouch)`（L73）。
-- 单指只发三种 phase 的 `touch`：`ACTION_DOWN→"began"`、`ACTION_MOVE→"moved"`、`ACTION_UP/CANCEL→"ended"`。**代码里没有任何"双击"检测**——单击/双击是 **Mac 端根据 touch 序列自己判定**的。所以"单击+双击一起失效"= **单指点按整条链路断了**（不是双击识别问题）。
-- 出站发送链路完好：`Protocol.touch(phase,x,y,t)`（L202）→ `{"type":"touch","phase":"began","x":..,"y":..}`；`MainActivity.send` → `ReceiverService.sendControl`。
-- **唯一本版对触摸路径有潜在影响的改动 = CursorOverlay 现在真的开始绘制/活动了**（jsonString 修复后 cursorImg 到达）。它是覆盖在 SurfaceView 之上的全屏 View。
+## 待办 2 — 解除最高分辨率限制未生效 ✅ 已修复（2026-09-04 凌晨，待真机验证）
 
-### 首要怀疑：CursorOverlay 拦截了触摸（需真机确认）
-- 层级：`FrameLayout` → `SurfaceView`(id=surface) → `CursorOverlay`(id=cursor_overlay) → `menu`(GONE)。
-- `CursorOverlay` 代码 `setClickable(false)` + `setFocusable(false)`（L54-56），注释称"触摸穿透到 SurfaceView"。
-- **但 Android 触摸分发**：z-order 更高的 CursorOverlay 会**先收到** `dispatchTouchEvent`。即使 clickable=false，若无条件 `return super.dispatchTouchEvent`，事件应继续下传到 SurfaceView——理论上应穿透。
-- **为何上上版能用、本版失效**：上上版 CursorOverlay 收不到 cursorImg（jsonString bug），可能一直没实际参与渲染；本版 overlay 真正叠上去后，若 Android 6 上该 view 的某个状态（如因 `postInvalidate` 重绘/焦点）改变了分发路径，就会拦截。
+**根因（源码实锤）**：Mac 端 `VirtualDisplay.swift` 给虚拟显示器只注册**一个**
+CGVirtualDisplayMode（= hello 报的像素 ÷ 2），且 `selectHiDPIMode` **每 2 秒强制切回**
+该模式——Mac 日志 `(re)selected: 918x600@2x (result 0)` ×3 就是用户切换被弹回的记录。
+**显示设置里选其他分辨率永远不会生效（官方设计），接收端唯一杠杆 = hello 报最大**。
+而旧代码用 `getDisplayMetrics()` 扣掉了导航栏（物理 1920×1200 面板只报了 1836×1200，
+`adb shell wm size` 已确认 1200x1920）。
 
-### 诊断步骤（下次续做）
-1. 真机 `adb logcat -s ODMain ODService`，看单指按下时有没有 `touch` 发送记录（当前代码 touch 路径**没打日志**，需先给 `onTouch` 加一行 Log 区分「事件到没到 onTouch」）。
-2. 若 onTouch 未触发 → 触摸被 CursorOverlay 拦。验证法：临时给 CursorOverlay 加 `setOnTouchListener` 打日志，或把 overlay 改为不拦截（override `onTouchEvent` 返回 false / 确认 dispatch 链）。
-3. 修法 A（若确为拦截）：CursorOverlay 完全不应参与触摸——可把 overlay 触摸事件无条件 `return false`，或改在 `addContentView` 后处理 / 用不带触摸的轻量方案。
-4. 修法 B（若 onTouch 触发了但 Mac 无反应）：查 touch 线格式（`phase` 枚举是否 Mac 认 `began/moved/ended`，坐标是否需乘某系数）。
+**修复**：`sendHello` 改用 `getRealMetrics()`（API 17，minSdk 23 安全）报面板物理
+分辨率，长边为 pixelsWide（MacSender 语义），1920×1200 → Mac 虚拟屏 960×600pt @2x、
+推流 1920×1200（全面板像素）。Mac 端 `points = pixels/2` **硬编码除 2、无视
+hello.scale**（iOS @3x 面板的历史设计），scale 字段仅存档。
+**预期管理**：装后 Mac 显示器里默认档就是"最高"（960×600@2x）；选其他档仍会被弹回
+（官方 2 秒执法循环），这是 Mac 端设计，非接收端能解。若推流卡顿可在 Mac app 的
+画质档调低（quality.scale 会缩放捕获分辨率），接收端代码不加任何上限。
 
----
-
-## 待办 2 — 解除最高分辨率限制未生效
-
-**状态**：🟡 待办（未修，用户要求后续迭代）
-
-### 现象
-- 用户之前在 Mac「显示器设置」里选最高分辨率会自动回到 918×600（HiDPI 逻辑分辨率，@2x ≈1836×1200 面板/编码像素）。
-- 本版去掉了 hello 里 `maxEncodeWide/High` 的 1920×1080 硬上限（对齐参考实现 josepacelli，不传该字段），**但仍选不到更高档** → 解除未生效。
-
-### 已核实的代码事实（本次读取 + 真机日志）
-- hello 现上报：`{"type":"hello","pixelsWide":1836,"pixelsHigh":1200,"scale":2.0,"device":"Android","id":"...","pv":2}` —— **确实已无 maxEncode 字段**（上限代码删干净了）。
-- 注意 `pixelsWide/pixelsHigh=1836×1200` 是 `DisplayMetrics` 返回的**逻辑分辨率**（`getResources().getDisplayMetrics()`），不是物理 2560×1600。@2x 下它就是用户看到的 918×600 的 2 倍。
-- Mac 回 `welcome pv=3.0` → **Mac 是 pv3**。
-- ⚠️ **README 明确本项目是 pv 3**（README L9/L43/L207），而本版把 `Protocol.PV` 从 3 改成了 2 —— 这是一次**欠考虑的回退**，并非根因（jsonString 才是光标根因），但造成代码(pv2)与文档/README(pv3)及 Mac(pv3)不一致。功能上 pv2 的 hello Mac 也接受并推流，暂无碍，但应回改为 3 以对齐。
-
-### 诊断方向（下次续做）
-1. **分辨率上限的真正机制不在接收端 hello，而在 Mac 端**：Mac 按 `hello.pixelsWide/High` + `scale` 建虚拟显示器。当前 1836×1200 是从 `getResources().getDisplayMetrics()` 拿的**逻辑**分辨率（可能被系统/沉浸模式/旧 API 限制在某个值）。
-   - 若想 Mac 能上更高档，接收端 hello 应报**物理像素**（`getWindowManager().getDefaultDisplay().getRealMetrics()`，Android 6 可用，返回 2560×1600）并相应调 `scale`，让 Mac 把扩展屏当更高分辨率物理屏。
-2. **918×600 是否是用户看到的逻辑分辨率**：确认 `adb logcat -s ODMain` 的 `video size WxH`（当前应 ≈1836×1200 或 1652×1080）。若 Mac 仍 capped，说明 Mac 端还有别的手工档位限制（如显示器"默认缩放"），未必是接收端能解。
-3. 需核对上游 peetzweg/opendisplay 真实协议对 `pixelsWide/High`、`scale` 的语义（本项目 README/`tools/fake_sender` 是"自洽参考"，非 Mac 官方；真实 Mac 在 pv3 下怎么消费 hello 字段，最好拉官方 Mac 端或 PROTOCOL.md 确认）。
-
----
-
-## 附：本版遗留的两处"低优先级一致性"记录（不阻塞，顺手时可清）
-- **A. `Protocol.PV` 3→2**：README 与 Mac 都是 pv3，建议改回 3 对齐（功能无碍，纯一致性）。改动很小但需走一遍 CI。
-- **B. 调试日志清理**：`ReceiverService.handleControl` 顶部 `Log.i(TAG,"ctrl: "+type)`（每控制消息都打，刷屏）+ cursor/cursorImg 日志。光标已验证，应删掉 `ctrl:` 那行再发干净版。
+## 附：本版遗留的两处"低优先级一致性"（✅ 已随本轮一并完成）
+- **A. `Protocol.PV` 2→3 已回改**：对齐 README 与上游 WireProtocol.version=3；
+  注释已更正（Mac 无按 pv 的功能开关，之前那条"pv 高会关光标叠加"是错误推断）
+- **B. 调试日志已清理**：`ctrl:` / `cursor v=` / `cursorImg pngLen=` 三处删除；
+  保留 `video size`（每次编码器配置打一条）与新增的 `touch began/ended`（每次点击
+  两条，回访验证用，确认稳定后可删）

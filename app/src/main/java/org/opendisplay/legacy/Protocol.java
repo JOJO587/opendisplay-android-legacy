@@ -22,12 +22,12 @@ public final class Protocol {
     public static final int PORT = 9000;
     public static final String SERVICE_TYPE = "_opensidecar._tcp";
     /**
-     * 协议版本。对齐真实 Mac 发送端（peetzweg/OpenDisplay，上游 Shared/Protocol.swift）：
-     * 参考实现 io.github.josepacelli 的 WireProtocol.VERSION = 2。
-     * 之前误写成 3，Mac 见到不认识的更高版本会关掉「本地光标叠加」等可选特性，
-     * 导致 pad 上收不到 cursor / cursorImg 消息（视频与触控是核心功能，照常工作）。
+     * 协议版本。对齐上游 peetzweg/OpenDisplay 的 Shared/Protocol.swift：
+     * WireProtocol.version = 3（本项目 README 亦按 pv3）。
+     * 已核实 Mac 端对 pv 只有一个下限检查（minSupportedPeer=1）并回 welcome，
+     * 没有任何按 pv 开关的特性（cursor / touch 均无版本门槛），见 MacSender.swift。
      */
-    public static final int PV = 2;
+    public static final int PV = 3;
 
     /** section 4：判定为 JSON 控制消息的长度上限 */
     private static final int JSON_MAX = 32768;
