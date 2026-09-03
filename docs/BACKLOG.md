@@ -1,6 +1,6 @@
 # BACKLOG — OpenDisplay Legacy Receiver 迭代待办
 
-> 用户（Jony）明确要求把已发现的问题记成**待办**、后续有空再迭代。
+> 用户明确要求把已发现的问题记成**待办**、后续有空再迭代。
 > 每条记录带「现象 / 已核实的代码事实 / 诊断方向」，方便下次直接续上，不重复排查。
 >
 > 当前基线：commit `5f093c6` 之后的修复改动（见下方"已修复待验证"）。
@@ -42,7 +42,7 @@ a123a29（jsonType 修好→welcome 分支活→connected 变 false→点击死�
 **装机验证（01:08，Mac 日志实锤）**：
 `virtual display created: id=17 960x600pt @2x` → `encoder ready: 1920x1200 H.264 18Mbps` →
 `capture started: 1920x1200` → `status[usb:first]: Extending to Android (1920×1200)`。
-全面板 1920×1200 像素推流已生效。（注：Mac 同时还在给"sylvia的 iPad"扩展 2048×1536
+全面板 1920×1200 像素推流已生效。（注：Mac 同时还在给另一台 iPad 设备扩展 2048×1536
 的另一块虚拟屏，两者互不干扰。）
 
 **根因（源码实锤）**：Mac 端 `VirtualDisplay.swift` 给虚拟显示器只注册**一个**

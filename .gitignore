@@ -21,3 +21,6 @@ keystore.properties
 
 # Python cache
 __pycache__/
+
+# WorkBuddy working memory (local only, may contain private session notes)
+.workbuddy/
