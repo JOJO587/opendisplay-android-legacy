@@ -19,8 +19,6 @@ import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
-import java.util.Locale;
-import java.util.UUID;
 
 /**
  * 接收端主服务：监听 TCP 9000，接受 Mac 连入，跑协议，喂解码器。
@@ -41,6 +39,8 @@ public class ReceiverService extends Service {
 
     public static final String ACTION_START = "org.opendisplay.legacy.START";
     public static final String ACTION_STOP = "org.opendisplay.legacy.STOP";
+    /** 通知栏「退出」动作广播的 action，由 ExitReceiver 接收后整体退出 */
+    public static final String ACTION_EXIT = "org.opendisplay.legacy.ACTION_EXIT";
 
     /**
      * 是否开启 mDNS 广播（WiFi 发现）。
@@ -74,6 +74,12 @@ public class ReceiverService extends Service {
         void onStatus(String text);
 
         void onSurfaceNeeded();
+
+        /** 收到 cursor 消息：visible 是否可见，x/y 归一化 0..1（左上原点） */
+        void onCursor(boolean visible, float x, float y);
+
+        /** 收到 cursorImg 消息：pngBase64 光标位图，nw/nh 归一化宽高，ax/ay 归一化热点 */
+        void onCursorImage(String pngBase64, float nw, float nh, float ax, float ay);
     }
 
     public static void attach(H264Decoder d, StatusCallback cb) {
@@ -272,8 +278,29 @@ public class ReceiverService extends Service {
             status("需要更新: " + msg);
         } else if ("pong".equals(type)) {
             // 时钟同步（规范 8.1）——本实现不做延迟统计，忽略即可
-        } else if ("cursor".equals(type) || "cursorImg".equals(type)) {
-            // 光标叠加：可选功能，本实现不渲染
+        } else if ("cursor".equals(type)) {
+            // 光标位置/可见性（规范 section 6：x/y 归一化 0..1，左上原点）
+            Double v = Protocol.jsonNumber(json, "v");
+            Double x = Protocol.jsonNumber(json, "x");
+            Double y = Protocol.jsonNumber(json, "y");
+            boolean visible = v != null && v != 0.0;
+            float fx = x == null ? 0f : x.floatValue();
+            float fy = y == null ? 0f : y.floatValue();
+            if (statusCb != null) statusCb.onCursor(visible, fx, fy);
+        } else if ("cursorImg".equals(type)) {
+            // 光标位图（规范 section 6：png 为 base64，nw/nh/ax/ay 归一化）
+            String pngB64 = Protocol.jsonString(json, "png");
+            if (pngB64 != null && statusCb != null) {
+                Double nw = Protocol.jsonNumber(json, "nw");
+                Double nh = Protocol.jsonNumber(json, "nh");
+                Double ax = Protocol.jsonNumber(json, "ax");
+                Double ay = Protocol.jsonNumber(json, "ay");
+                statusCb.onCursorImage(pngB64,
+                        nw == null ? 0.03f : nw.floatValue(),
+                        nh == null ? 0.03f : nh.floatValue(),
+                        ax == null ? 0.5f : ax.floatValue(),
+                        ay == null ? 0.5f : ay.floatValue());
+            }
         }
         // 其余 type（ping / stats / 未来的新类型）一律忽略
     }
@@ -413,13 +440,26 @@ public class ReceiverService extends Service {
         PendingIntent pi = PendingIntent.getActivity(this, 0, i,
                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
                         ? PendingIntent.FLAG_IMMUTABLE : 0);
-        return new Notification.Builder(this)
+
+        // 通知栏「退出」动作：发广播给 ExitReceiver，由它停止前台服务并关闭 Activity
+        Intent exitIntent = new Intent(this, ExitReceiver.class);
+        exitIntent.setAction(ACTION_EXIT);
+        PendingIntent exitPi = PendingIntent.getBroadcast(this, 1, exitIntent,
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
+                        ? PendingIntent.FLAG_IMMUTABLE : 0);
+
+        Notification.Builder nb = new Notification.Builder(this)
                 .setContentTitle("OpenDisplay 接收端")
                 .setContentText(text)
                 .setSmallIcon(android.R.drawable.ic_menu_view)
                 .setContentIntent(pi)
-                .setOngoing(true)
-                .build();
+                .addAction(android.R.drawable.ic_menu_close_clear_cancel, "退出", exitPi)
+                .setOngoing(true);
+        // O+ 必须绑定通知渠道，否则 startForeground 抛 RemoteServiceException
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            nb.setChannelId(CHANNEL_ID);
+        }
+        return nb.build();
     }
 
     private void updateNotification(String text) {

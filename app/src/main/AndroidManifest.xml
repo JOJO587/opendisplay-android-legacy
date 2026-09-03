@@ -49,6 +49,16 @@
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
+
+        <!-- 通知栏「退出」动作：进程级可达，停止接收服务并关闭 Activity -->
+        <receiver
+            android:name=".ExitReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="org.opendisplay.legacy.ACTION_EXIT" />
+            </intent-filter>
+        </receiver>
     </application>
 
 </manifest>

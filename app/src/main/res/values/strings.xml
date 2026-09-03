@@ -3,6 +3,8 @@
     <string name="app_name">OpenDisplay</string>
     <string name="starting">正在启动接收端…</string>
     <string name="quit">退出</string>
+    <string name="exit">退出</string>
+    <string name="close">关闭</string>
     <string name="mode_adb">模式: USB(ADB)</string>
     <string name="mode_wifi">模式: WiFi</string>
 </resources>

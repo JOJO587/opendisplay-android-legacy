@@ -14,3 +14,10 @@ keystore.properties
 # Misc
 .DS_Store
 *.log
+
+# Local debug notes (not part of the project docs)
+/DEBUG_STATUS.md
+/BUILD_AND_DEBUG.md
+
+# Python cache
+__pycache__/
