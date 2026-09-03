@@ -37,10 +37,9 @@ public class BootReceiver extends BroadcastReceiver {
             case "android.intent.action.LOCKED_BOOT_COMPLETED":
             case "android.intent.action.MY_PACKAGE_REPLACED": // 自身更新后
                 Log.i(TAG, "boot/restart signal: " + action);
+                // 不再传"是否广播"的开关：mDNS 广播常开，USB 与 WiFi 两条路并存
                 Intent svc = new Intent(context, ReceiverService.class)
-                        .setAction(ReceiverService.ACTION_START)
-                        // ADB 模式优先：设备端不广播 mDNS，避免和 Mac 本地代理冲突
-                        .putExtra(ReceiverService.EXTRA_WIFI_DISCOVERY, false);
+                        .setAction(ReceiverService.ACTION_START);
                 try {
                     if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
                         context.startForegroundService(svc);

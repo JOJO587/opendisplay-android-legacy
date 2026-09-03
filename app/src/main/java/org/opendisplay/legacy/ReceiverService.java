@@ -44,15 +44,22 @@ public class ReceiverService extends Service {
     public static final String ACTION_EXIT = "org.opendisplay.legacy.ACTION_EXIT";
 
     /**
-     * 是否开启 mDNS 广播（WiFi 发现）。
+     * mDNS 广播（WiFi 发现）**始终开启**，与当前走哪条链路无关。
      *
-     * ADB 模式下必须关掉：Mac 端的 Bonjour 浏览器若同时看到
-     *   (a) 设备自己广播的服务 → 解析出设备真实 IP → 走 WiFi
-     *   (b) Mac 本地代理注册的服务 → 指向 127.0.0.1 → 走 USB
-     * 它可能挑 (a)，那 USB 链路就白建了。关掉设备端广播，
-     * 让 Mac 只能看到 (b)，才能强制走 USB。
+     * 旧版本写的是"ADB 模式下必须关掉"，理由是担心 Mac 端的 Bonjour 浏览器
+     * 同时看到 (a) 设备自己广播的 WiFi 服务 与 (b) 指向 127.0.0.1 的隧道服务时，
+     * 可能挑 (a)，导致 USB 链路白建。这个顾虑已核实为**不成立**：
+     * 上游 Mac 端 OpenSidecarMacApp.swift 的 dedupeSessions() 对同一设备的
+     * 两条会话会明确 "keeping the cable, dropping the WiFi one"——保有线、踢 WiFi。
+     *
+     * 反过来，广播常开是"USB 断了还能走 WiFi"的唯一前提：官方 Mac 端本来就
+     * 内置 failover（拔线后若设备的 WiFi 服务可见就切过去，否则会话超时结束，
+     * 见 OpenSidecarMacApp.swift 中关于 unplugging 的注释）。我们之前在 USB 模式下
+     * 把广播关掉，等于亲手把这条兜底路径掐死了。
+     *
+     * 所以：永远监听 9000 + 永远广播，两条路不做互斥（参考实现
+     * gprot42/android-opendisplay 的 ConnectionMode.kt 也是这个设计）。
      */
-    public static final String EXTRA_WIFI_DISCOVERY = "wifi_discovery";
 
     private ServerSocket serverSocket;
     private volatile Socket current;
@@ -62,10 +69,12 @@ public class ReceiverService extends Service {
     /** 供 UI 层（触控转发）使用的当前连接句柄 */
     private static volatile Socket controlSocket;
 
+    /** 当前链路类型（USB 隧道 / WiFi），由 adopt 写入、readLoop 断开时读取 */
+    private volatile String currentLink = LinkType.WIFI;
+
     private NsdAdvertiser nsd;
     private PowerManager.WakeLock wakeLock;
     private String stableId;
-    private volatile boolean wifiDiscovery = false; // 默认 ADB 优先
 
     /** 由 Activity 在 surface 就绪时注入（UI 线程写、网络线程读，须 volatile） */
     private static volatile H264Decoder decoder;
@@ -127,15 +136,10 @@ public class ReceiverService extends Service {
             stopSelf();
             return START_NOT_STICKY;
         }
-        if (intent != null && intent.hasExtra(EXTRA_WIFI_DISCOVERY)) {
-            wifiDiscovery = intent.getBooleanExtra(EXTRA_WIFI_DISCOVERY, false);
-        }
-        startForeground(NOTIF_ID, buildNotification(
-                wifiDiscovery ? "监听中（WiFi 发现已开）" : "监听中（ADB/USB 模式）"));
+        startForeground(NOTIF_ID, buildNotification("监听中（USB / WiFi 均可连入）"));
         acquireWakeLock();
-        if (wifiDiscovery) {
-            nsd.start(); // 仅 WiFi 模式才广播，ADB 模式下保持静默
-        }
+        // 无条件广播：USB 与 WiFi 两条路并存，拔线后 Mac 才能在 WiFi 上找到本设备
+        nsd.start();
         startListening();
         return START_STICKY;
     }
@@ -162,9 +166,7 @@ public class ReceiverService extends Service {
         acceptThread = new Thread(this::acceptLoop, "od-accept");
         acceptThread.setDaemon(true);
         acceptThread.start();
-        status(wifiDiscovery
-                ? "监听 TCP " + Protocol.PORT + "（WiFi 发现已开）"
-                : "监听 TCP " + Protocol.PORT + "（ADB/USB 模式，等待隧道连入）");
+        status("监听 TCP " + Protocol.PORT + "（USB 隧道 / WiFi 均可连入）");
     }
 
     private void acceptLoop() {
@@ -198,6 +200,11 @@ public class ReceiverService extends Service {
         } catch (Exception ignored) {
         }
 
+        // 链路识别（见 LinkType）：经 adb 桥连入时安卓端看到的对端是 127.0.0.1，
+        // WiFi 连入则是局域网地址。getInetAddress() 在 socket 已关闭时返回 null，
+        // LinkType 内部有兜底，不会 NPE。
+        String link = LinkType.label(s.getInetAddress());
+
         Socket old;
         synchronized (this) {
             // current 的所有读改都走 this 锁：readLoop finally 的清理与
@@ -206,6 +213,7 @@ public class ReceiverService extends Service {
             old = current;
             current = s;
             controlSocket = s;
+            currentLink = link;
         }
         if (old != null) {
             try {
@@ -222,8 +230,8 @@ public class ReceiverService extends Service {
 
         startReadLoop(s);
         startPingLoop(s);
-        status("已连接: " + s.getRemoteSocketAddress());
-        updateNotification("已连接 " + s.getRemoteSocketAddress());
+        status("已连接（" + link + "）: " + s.getRemoteSocketAddress());
+        updateNotification("已连接（" + link + "） " + s.getRemoteSocketAddress());
         // 显式连接回调：触摸/滚动转发依赖它，不能用状态文本反推
         if (statusCb != null) statusCb.onConnectionChanged(true);
     }
@@ -308,8 +316,16 @@ public class ReceiverService extends Service {
                     s.close();
                 } catch (IOException ignored) {
                 }
-                status("连接断开，等待重连…");
-                updateNotification("等待 Mac 连接…");
+                // 按断掉的链路给不同提示：USB 断了正是"兜底"场景，
+                // 明确告诉用户改走 WiFi（广播常开，Mac 上应能看到本设备）
+                if (LinkType.USB.equals(currentLink)) {
+                    status("USB 已断开，可在 Mac 上点 WiFi 连接");
+                    updateNotification("USB 已断开，等待 WiFi 连入…");
+                } else {
+                    status("连接断开，等待重连…");
+                    updateNotification("等待 Mac 连接…");
+                }
+                // 触摸转发依赖这个回调，任何分支都不能漏发
                 if (statusCb != null) statusCb.onConnectionChanged(false);
             }
         }

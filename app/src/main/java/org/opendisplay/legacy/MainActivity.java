@@ -41,9 +41,6 @@ public class MainActivity extends Activity
     private String lastStatus = "";
     private volatile int videoW = 0, videoH = 0;
 
-    /** 默认 ADB/USB 优先：不广播 mDNS，让 Mac 只能走 127.0.0.1 隧道 */
-    private boolean wifiDiscovery = false;
-
     // 三指手势状态
     private long threeDownTime = 0;
     private boolean threeMoved = false;
@@ -79,8 +76,7 @@ public class MainActivity extends Activity
 
         ReceiverService.attach(null, this);
         startService(new Intent(this, ReceiverService.class)
-                .setAction(ReceiverService.ACTION_START)
-                .putExtra(ReceiverService.EXTRA_WIFI_DISCOVERY, wifiDiscovery));
+                .setAction(ReceiverService.ACTION_START));
     }
 
     @Override

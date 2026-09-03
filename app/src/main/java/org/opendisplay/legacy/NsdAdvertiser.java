@@ -25,6 +25,13 @@ public class NsdAdvertiser {
     private final String id;
     private NsdManager.RegistrationListener listener;
     private boolean registered = false;
+    /**
+     * 注册请求已发出、回调还没回来。registered 是异步回调才置位的，
+     * 加上这个标记避免 start() 被连续调用时重复 registerService
+     * （重复注册会以 NAME_CONFLICT 失败，虽不崩但会污染日志）。
+     * 由 NsdManager 回调线程写、调用方线程读，须 volatile。
+     */
+    private volatile boolean registerPending = false;
 
     public NsdAdvertiser(Context ctx, String serviceName, String id) {
         this.nsd = (NsdManager) ctx.getSystemService(Context.NSD_SERVICE);
@@ -33,7 +40,8 @@ public class NsdAdvertiser {
     }
 
     public void start() {
-        if (nsd == null || registered) return;
+        if (nsd == null || registered || registerPending) return;
+        registerPending = true;
 
         NsdServiceInfo info = new NsdServiceInfo();
         info.setServiceName(serviceName);
@@ -50,12 +58,14 @@ public class NsdAdvertiser {
             public void onServiceRegistered(NsdServiceInfo si) {
                 Log.i(TAG, "registered: " + si.getServiceName());
                 registered = true;
+                registerPending = false;
             }
 
             @Override
             public void onRegistrationFailed(NsdServiceInfo si, int errorCode) {
                 Log.w(TAG, "register failed: " + errorCode);
                 registered = false;
+                registerPending = false; // 允许后续重试
             }
 
             @Override
@@ -73,6 +83,9 @@ public class NsdAdvertiser {
             nsd.registerService(info, NsdManager.PROTOCOL_DNS_SD, listener);
         } catch (Exception e) {
             Log.e(TAG, "registerService threw", e);
+            // 同步抛出时不会有任何回调，必须复位，否则 registerPending 卡死、
+            // 之后所有 start() 都被挡住（广播从此再也起不来）
+            registerPending = false;
         }
     }
 
