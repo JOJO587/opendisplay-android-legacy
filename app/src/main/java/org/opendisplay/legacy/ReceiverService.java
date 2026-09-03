@@ -12,6 +12,7 @@ import android.os.IBinder;
 import android.os.PowerManager;
 import android.util.DisplayMetrics;
 import android.util.Log;
+import android.view.WindowManager;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -234,7 +235,9 @@ public class ReceiverService extends Service {
         // 模式列表只有 hello 报的这一档，且每 2s 强制切回（selectHiDPIMode），
         // 所以"用户想要最高分辨率" = 这里必须报面板物理上限。
         DisplayMetrics dm = new DisplayMetrics();
-        getWindowManager().getDefaultDisplay().getRealMetrics(dm);
+        // Service 没有 Activity 那个 getWindowManager()，须走 getSystemService
+        WindowManager wm = (WindowManager) getSystemService(Context.WINDOW_SERVICE);
+        wm.getDefaultDisplay().getRealMetrics(dm);
         // hello 语义：pixelsWide 是横屏长边（MacSender 注释），旋转无关，
         // 统一取长/短边归一化
         int w = Math.max(dm.widthPixels, dm.heightPixels);
