@@ -140,6 +140,8 @@ public class MainActivity extends Activity
                 public void onSizeChanged(int w, int h) {
                     videoW = w;
                     videoH = h;
+                    // 调试：Mac 实际推送的编码分辨率（用于核对扩展屏分辨率/HiDPI 缩放）
+                    Log.i(TAG, "video size " + w + "x" + h);
                 }
 
                 @Override

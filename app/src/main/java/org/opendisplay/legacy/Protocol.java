@@ -21,7 +21,13 @@ public final class Protocol {
 
     public static final int PORT = 9000;
     public static final String SERVICE_TYPE = "_opensidecar._tcp";
-    public static final int PV = 3;
+    /**
+     * 协议版本。对齐真实 Mac 发送端（peetzweg/OpenDisplay，上游 Shared/Protocol.swift）：
+     * 参考实现 io.github.josepacelli 的 WireProtocol.VERSION = 2。
+     * 之前误写成 3，Mac 见到不认识的更高版本会关掉「本地光标叠加」等可选特性，
+     * 导致 pad 上收不到 cursor / cursorImg 消息（视频与触控是核心功能，照常工作）。
+     */
+    public static final int PV = 2;
 
     /** section 4：判定为 JSON 控制消息的长度上限 */
     private static final int JSON_MAX = 32768;
@@ -157,8 +163,10 @@ public final class Protocol {
 
     /**
      * hello：连接后必须第一个发送，发送端据此创建虚拟显示器（section 6.1）。
-     * maxEncodeWide/High 是 pv3 的 additive 字段，用来声明"我能稳定解码的上限"，
-     * 老平板务必设置，否则发送端会按面板尺寸推流，老设备根本解不动（section 6.5）。
+     * maxEncodeWide/High 是 pv3 的可选 additive 字段，仅当接收端确有比面板
+     * 分辨率更低的硬性解码上限时才填；否则传 null 让发送端按面板分辨率推流，
+     * 由用户在发送端（Mac 显示器设置）自行选分辨率（对齐参考实现 josepacelli，
+     * 其 hello 不带 maxEncode* 字段）。
      */
     public static String hello(int pixelsWide, int pixelsHigh, float scale,
                                String device, String id,
@@ -231,15 +239,30 @@ public final class Protocol {
         return jsonString(json, "type");
     }
 
-    /** 取出顶层字符串字段值 */
+    /** 取出顶层字符串字段的【值】（非字段名）。该字段不是字符串值（数字/布尔/缺省）时返回 null。 */
     public static String jsonString(String json, String key) {
         int i = indexOfKey(json, key);
         if (i < 0) return null;
-        int q1 = json.indexOf('"', i);
-        if (q1 < 0) return null;
-        int q2 = json.indexOf('"', q1 + 1);
-        if (q2 < 0) return null;
-        return json.substring(q1 + 1, q2);
+        // key 形如 "type"，indexOfKey 返回的是它起始引号的位置。
+        // 先定位该 key 的结束引号，再向后找冒号与值。
+        int keyEnd = json.indexOf('"', i + 1);
+        if (keyEnd < 0) return null;
+        int colon = json.indexOf(':', keyEnd);
+        if (colon < 0) return null;
+        // 跳过冒号后的空白
+        int s = colon + 1;
+        while (s < json.length() && (json.charAt(s) == ' ' || json.charAt(s) == '\t')) s++;
+        if (s >= json.length() || json.charAt(s) != '"') return null; // 值不是字符串
+        int valStart = s + 1;
+        int valEnd = valStart;
+        while (valEnd < json.length()) {
+            char c = json.charAt(valEnd);
+            if (c == '\\') { valEnd += 2; continue; } // 跳过转义字符
+            if (c == '"') break;
+            valEnd++;
+        }
+        if (valEnd >= json.length()) return null; // 未闭合
+        return json.substring(valStart, valEnd);
     }
 
     /** 取出顶层数字字段值；不存在返回 null */

@@ -130,9 +130,15 @@ public class CursorOverlay extends View {
             canvas.drawBitmap(bitmap, null,
                     new RectF(originX, originY, originX + spriteW, originY + spriteH), paint);
         } else {
-            // 还没收到图：画一个白点占位，至少让光标可见
-            float r = Math.max(4f, boxW * 0.006f);
+            // 还没收到图：画一个白底黑边的圆点占位（参考实现同款），
+            // 在亮色桌面背景上也清晰可见。
+            float r = Math.max(5f, boxW * 0.008f);
+            paint.setStyle(Paint.Style.FILL);
             paint.setColor(0xFFFFFFFF);
+            canvas.drawCircle(cursorPxX, cursorPxY, r, paint);
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(Math.max(1.5f, r * 0.28f));
+            paint.setColor(0xFF000000);
             canvas.drawCircle(cursorPxX, cursorPxY, r, paint);
         }
     }

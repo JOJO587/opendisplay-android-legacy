@@ -212,13 +212,12 @@ public class ReceiverService extends Service {
         int h = dm.heightPixels;
         float scale = dm.density;
 
-        // 老设备解码能力有限：用 pv3 的 maxEncode* 字段声明上限，
-        // 否则 Mac 会按面板分辨率推流，老平板根本解不动（规范 6.5）
-        int capW = Math.min(w, 1920);
-        int capH = Math.min(h, 1080);
-
-        String json = Protocol.hello(w, h, scale, "Android",
-                stableId, capW, capH);
+        // 分辨率上限不在代码里写死：直接上报面板完整原生分辨率，
+        // 由发送端（Mac 显示器设置）来决定实际推流分辨率——
+        // 若推流撑不住，用户在 Mac 端手动调低即可（对齐参考实现
+        // io.github.josepacelli，其 hello 不带任何 maxEncode* 字段）。
+        String json = Protocol.hello(w, h, scale, "Android", stableId,
+                null, null);
         Log.i(TAG, "hello: " + json);
         out.write(Protocol.frameJson(json));
         out.flush();
@@ -267,6 +266,10 @@ public class ReceiverService extends Service {
         String type = Protocol.jsonType(json);
         if (type == null) return; // 不可解析的消息按规范应忽略
 
+        // 调试：把每一个收到的控制消息类型都打到 logcat（tag ODService），
+        // 用来确认 Mac 到底有没有发 cursor / cursorImg。验证完光标后可删。
+        Log.i(TAG, "ctrl: " + type);
+
         // 规范 section 6：未知 type 必须忽略，不能当错误处理
         if ("welcome".equals(type)) {
             Double pv = Protocol.jsonNumber(json, "pv");
@@ -279,17 +282,20 @@ public class ReceiverService extends Service {
         } else if ("pong".equals(type)) {
             // 时钟同步（规范 8.1）——本实现不做延迟统计，忽略即可
         } else if ("cursor".equals(type)) {
-            // 光标位置/可见性（规范 section 6：x/y 归一化 0..1，左上原点）
+            // 光标位置/可见性（规范 section 6：x/y/v 归一化 0..1，左上原点）。
+            // v 是数字 1/0（对齐参考实现 josepacelli：obj.optInt("v",0)==1）。
             Double v = Protocol.jsonNumber(json, "v");
             Double x = Protocol.jsonNumber(json, "x");
             Double y = Protocol.jsonNumber(json, "y");
             boolean visible = v != null && v != 0.0;
             float fx = x == null ? 0f : x.floatValue();
             float fy = y == null ? 0f : y.floatValue();
+            Log.i(TAG, "cursor v=" + visible + " x=" + fx + " y=" + fy);
             if (statusCb != null) statusCb.onCursor(visible, fx, fy);
         } else if ("cursorImg".equals(type)) {
             // 光标位图（规范 section 6：png 为 base64，nw/nh/ax/ay 归一化）
             String pngB64 = Protocol.jsonString(json, "png");
+            Log.i(TAG, "cursorImg pngLen=" + (pngB64 == null ? -1 : pngB64.length()));
             if (pngB64 != null && statusCb != null) {
                 Double nw = Protocol.jsonNumber(json, "nw");
                 Double nh = Protocol.jsonNumber(json, "nh");
