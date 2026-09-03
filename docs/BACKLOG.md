@@ -9,7 +9,10 @@
 
 ---
 
-## 待办 1 — 单击/双击手势失效（回归）✅ 已修复（2026-09-04 凌晨，待真机验证）
+## 待办 1 — 单击/双击手势失效（回归）✅ 已修复+装机验证（2026-09-04）
+
+**装机验证（01:08）**：真实手指触摸（含拖拽 began≠ended）与合成 tap 均在 logcat 见
+`touch began/ended` 正常发出，无异常崩溃。真机点击是否在 Mac 端生效待用户肉眼确认。
 
 **根因（铁证闭环）**：`MainActivity.onStatus` 用 `connected = text.contains("已连接")` 从
 状态文本反推连接状态。jsonString 修复后 `welcome` 分支第一次真正跑起来，它发出的
@@ -34,7 +37,13 @@ a123a29（jsonType 修好→welcome 分支活→connected 变 false→点击死�
 - 验证手段：新 APK 装后 `adb logcat -s ODMain` 应见 `touch began/ended`；
   真机点击 pad 应触发 Mac 点击
 
-## 待办 2 — 解除最高分辨率限制未生效 ✅ 已修复（2026-09-04 凌晨，待真机验证）
+## 待办 2 — 解除最高分辨率限制未生效 ✅ 已修复+装机验证（2026-09-04）
+
+**装机验证（01:08，Mac 日志实锤）**：
+`virtual display created: id=17 960x600pt @2x` → `encoder ready: 1920x1200 H.264 18Mbps` →
+`capture started: 1920x1200` → `status[usb:first]: Extending to Android (1920×1200)`。
+全面板 1920×1200 像素推流已生效。（注：Mac 同时还在给"sylvia的 iPad"扩展 2048×1536
+的另一块虚拟屏，两者互不干扰。）
 
 **根因（源码实锤）**：Mac 端 `VirtualDisplay.swift` 给虚拟显示器只注册**一个**
 CGVirtualDisplayMode（= hello 报的像素 ÷ 2），且 `selectHiDPIMode` **每 2 秒强制切回**
