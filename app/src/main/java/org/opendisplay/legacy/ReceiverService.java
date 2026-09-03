@@ -10,6 +10,7 @@ import android.content.Intent;
 import android.os.Build;
 import android.os.IBinder;
 import android.os.PowerManager;
+import android.util.DisplayMetrics;
 import android.util.Log;
 
 import java.io.IOException;
@@ -200,7 +201,7 @@ public class ReceiverService extends Service {
 
     /** hello 必须是连接后第一条消息（规范 6.1） */
     private void sendHello(OutputStream out) throws IOException {
-        android.view.DisplayMetrics dm = getResources().getDisplayMetrics();
+        DisplayMetrics dm = getResources().getDisplayMetrics();
         int w = dm.widthPixels;
         int h = dm.heightPixels;
         float scale = dm.density;
@@ -278,7 +279,7 @@ public class ReceiverService extends Service {
     }
 
     private void handleVideo(byte[] payload, int len) {
-        int sc = Protocol.findAnnexBStart(payload);
+        int sc = Protocol.findAnnexBStart(payload, len);
         if (sc < 0) return; // 没有起始码，丢弃
         if (decoder == null) return;
 
