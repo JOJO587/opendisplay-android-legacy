@@ -75,7 +75,26 @@ startForegroundService、PendingIntent mutability、exported 声明）均已正�
 **修法（小改动）**：manifest 给 `<service>` 加 `foregroundServiceType`（候选
 `mediaPlayback` 或 `connectedDevice`）+ 对应权限，Java 无需改动，走一轮 CI 验证。
 
-## 待办 4 — WiFi↔USB 自动切换（🟡 调研完成，方案待用户拍板，2026-09-04）
+## 待办 4 — WiFi↔USB 自动切换（✅ 兜底版已实现并装机验证，2026-09-04）
+
+**最终落地（用户拍板：保留 override，只要"USB 断了能走 WiFi"的兜底）**：
+commit `e07529e`（CI run 33818592517 ✅，装机 07:43 验证通过）：
+1. NSD 广播无条件常开（删死开关 EXTRA_WIFI_DISCOVERY/wifiDiscovery）；
+2. 新增 LinkType 链路识别：回环=USB 隧道、其余=WiFi，状态/通知显示「已连接（USB/WiFi）」；
+3. USB 断开时通知提示「USB 已断开，等待 WiFi 连入…」；onConnectionChanged(false) 全分支保留；
+4. NsdAdvertiser 加 registerPending 防重复注册 + 同步抛异常复位（防 start 永久卡死）。
+未做（明确放弃）：hello.addrs、Mac launchd 守护——保留 override 时无自动迁移收益，
+且用户拒绝"必须有 WiFi"类代价。拔线后续接 = 在 Mac 设备列表点一下 WiFi 条目。
+
+**装机实证**：重装后 adb forward 恰好失效，Mac 经 NSD 广播自动发现设备并走
+WiFi（fe80:: link-local）连上，安卓日志实锤 `已连接（WiFi）`——广播常开 + 链路
+识别当场自证有效。macOS 无 JDK，tools/LinkTypeTest.java 留待有 JDK 环境跑。
+
+---
+
+**以下为历史调研记录（其中第 3 条后续被官方 failover 注释修正：Mac 端有
+"拔线后 WiFi 服务可见即切换"的机制，但触发链依赖 usbmuxd，对安卓不自动触发；
+transport 为 override 回环时拔线后只会重拨回环直至超时）**：
 
 **调研结论（重读上游 MacSender.swift / Usbmux.swift / PROTOCOL.md 6.4 后，修正上轮方案）**：
 
