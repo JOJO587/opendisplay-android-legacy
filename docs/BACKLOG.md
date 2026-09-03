@@ -60,6 +60,61 @@ hello.scale**（iOS @3x 面板的历史设计），scale 字段仅存档。
 （官方 2 秒执法循环），这是 Mac 端设计，非接收端能解。若推流卡顿可在 Mac app 的
 画质档调低（quality.scale 会缩放捕获分辨率），接收端代码不加任何上限。
 
+---
+
+## 待办 3 — Android 14+ 前台服务类型缺失（🟡 待办，2026-09-04 记录）
+
+**现状**：`minSdk 23` 设计上 Android 6.0+ 全兼容；6~13 的高版本要求（通知渠道、
+startForegroundService、PendingIntent mutability、exported 声明）均已正确分支处理。
+
+**隐患**：`targetSdk 34` + **Android 14（API 34）** 起，前台服务必须在 manifest 声明
+`android:foregroundServiceType` 并配对应 `FOREGROUND_SERVICE_*` 权限，否则
+`startForeground()` 抛异常崩溃。`ReceiverService` 目前未声明类型 →
+**Android 14/15 设备装得上但起不来**。
+
+**修法（小改动）**：manifest 给 `<service>` 加 `foregroundServiceType`（候选
+`mediaPlayback` 或 `connectedDevice`）+ 对应权限，Java 无需改动，走一轮 CI 验证。
+
+## 待办 4 — WiFi↔USB 自动切换（🟡 调研完成，方案待用户拍板，2026-09-04）
+
+**调研结论（重读上游 MacSender.swift / Usbmux.swift / PROTOCOL.md 6.4 后，修正上轮方案）**：
+
+1. **USB 场景 Mac 端跑 adb 隧道命令不可省**。官方 Mac app 的 USB 发现只走
+   usbmuxd（苹果设备专有协议），对安卓设备无感知；ADB 隧道只能由 USB 主机（Mac）
+   发起。PROTOCOL.md 附录 B 明说：非苹果接收端就用 adb 隧道绑定。
+2. **cable upgrade（hello.addrs）对安卓有一个可行变体**：Mac 探测时只禁
+   WiFi/蜂窝、不禁 loopback（MacSender.swift probeForCablePath）→ 安卓在
+   hello.addrs 里报 `127.0.0.1`（Mac 侧 adb forward 的回环入口），先走 WiFi 会话
+   时 Mac 每 10s 探测 127.0.0.1:9000，隧道已建则自动 migrate 到 USB，全程无感。
+   注意：不能报设备自身 WiFi IP（会被 WiFi 禁令拒绝，官方文档也明说手机 WiFi
+   地址只会招来虚假升级）。
+3. **"拔线自动回 WiFi"官方机制做不到**：migrate 后重连只重拨迁移后的地址
+   （127.0.0.1），Mac 也无"自动连接发现的 WiFi 设备"逻辑（需手动点）。
+   但安卓 `device="Android"` ≠ "Mac" ⇒ `currentPathDirectLink=false` ⇒ 拔线走
+   scheduleReconnect 而非结束会话；只要隧道重建（重插线），Mac 的重拨循环会
+   **自动续上**，无需人工。
+4. **override 现状**：`defaults write com.peetzweg.opensidecar.mac host 127.0.0.1
+   port 9000` 仍在生效。override 是"追加"不是"替换"——Bonjour WiFi 设备（iPad）
+   照常可连。副作用：Mac app 启动即自动拨 127.0.0.1:9000（伪装成 usb:first 有线
+   设备），隧道没建时状态栏常显"Waiting for receiver…"。
+
+**候选方案**（等用户选）：
+- **方案 1（推荐，体验最接近"全自动"）**：安卓端 NSD 广播常开（现在 USB 模式静默）
+  + hello.addrs 报 `["127.0.0.1"]`；Mac 端装一个 launchd 常驻小守护（一次性安装），
+  检测到 adb 设备插入自动 `adb forward tcp:9000 tcp:9000`。效果：插线自动升级到
+  USB、拔线重插自动续上、纯 WiFi 也能连（手动点一次）；保留 override。
+- **方案 2（保守）**：只做 NSD 常开 + 保留现状 override，不做 addrs/守护。
+  USB 断后手动点一次 WiFi 设备续接。
+
+## 待办 5 — APP 图标（✅ 完成 2026-09-04，待装机确认）
+
+官方 Mac AppIcon.icns（256px 最大档）→ `sips` 切成安卓五档密度 PNG
+（mdpi 48 / hdpi 72 / xhdpi 96 / xxhdpi 144 / xxxhdpi 192）→
+`res/mipmap-*/ic_launcher.png`，manifest `android:icon="@mipmap/ic_launcher"`。
+不做 Android 8+ 自适应图标（主力设备 Android 6 不支持，且会裁切官方设计）。
+素材源：`/Applications/OpenDisplay.app/Contents/Resources/AppIcon.icns`。
+
+
 ## 附：本版遗留的两处"低优先级一致性"（✅ 已随本轮一并完成）
 - **A. `Protocol.PV` 2→3 已回改**：对齐 README 与上游 WireProtocol.version=3；
   注释已更正（Mac 无按 pv 的功能开关，之前那条"pv 高会关光标叠加"是错误推断）
