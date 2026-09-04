@@ -21,7 +21,7 @@ The OpenDisplay protocol itself is solid, but the Mac sender has two rough edges
 
 ## 为什么有这个项目
 
-我们有一台 Android 6 的平板。翻了 GitHub，所有 Open Display 实现都要求至少 Android 8。没有一个能在 6 上跑。所以我们自己写了一个。
+我有一台 Android 6 的平板。翻了 GitHub，所有 Open Display 实现都要求至少 Android 8。没有一个能在 6 上跑。所以我自己写了一个。
 
 OpenDisplay 协议本身很成熟，但 Mac 发送端有两个坑：USB 发现走的是 usbmuxd，根本不在设备列表里；WiFi 发现依赖 Bonjour，但 Mac app 里没有手动输入 IP 的入口，设备不主动广播就永远找不到。这个项目把两个坑都填了：老平板能被发现了、能稳定连上了。纯 Java，不依赖任何新 API，Android 6 原生运行。
 
