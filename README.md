@@ -11,13 +11,13 @@ Turn an old **Android 6.0 – 13** tablet into a wired/wireless second display f
 
 ---
 
-## 为什么有这个项目
+## Why This Project
 
-Duet 停服、Sidecar 只支持自家设备，主流方案早就把 Android 6 这种老设备丢进了垃圾堆。
+We had an Android 6 tablet sitting around. Looked on GitHub — every Open Display implementation we found required Android 8 at minimum. Nothing worked on 6.
 
-OpenDisplay 协议本身做得很好，但 Mac 发送端有两个问题：USB 发现走的是 usbmuxd，安卓根本不在它的设备列表里；WiFi 发现虽然靠 Bonjour，但 Mac app 里没有手动输入 IP 的入口，设备不主动广播就永远找不到。
+So we built one.
 
-这个项目就是来解决这两个卡点：**让老平板也能被发现、被连接**。纯 Java 写，不依赖任何新版 API，所以能跑在 Android 6 上。
+The OpenDisplay protocol itself is solid, but the Mac sender has two rough edges: USB discovery goes through usbmuxd, which doesn't list Android devices at all; WiFi discovery depends on Bonjour, but the Mac app has no manual IP field — if your device isn't actively broadcasting, it's invisible. This project solves both: **old tablets get discovered and stay connected**. Pure Java, no new API calls, runs on Android 6 out of the box.
 
 ---
 
