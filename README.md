@@ -1,207 +1,146 @@
-# OpenDisplay Legacy Receiver — Android 6.0 (API 23) 接收端
+# OpenDisplay Legacy Receiver (Android)
 
-让 **Android 6.0 及以上** 的旧平板 / 旧手机，变成 Mac 的第二块扩展屏。
+[![CI](https://github.com/JOJO587/opendisplay-android-legacy/actions/workflows/build.yml/badge.svg)](https://github.com/JOJO587/opendisplay-android-legacy/actions/workflows/build.yml)
+[![Release](https://img.shields.io/github/v/release/JOJO587/opendisplay-android-legacy)](https://github.com/JOJO587/opendisplay-android-legacy/releases)
+![Platform](https://img.shields.io/badge/platform-Android%206.0%2B-green)
+![Deps](https://img.shields.io/badge/dependencies-zero-blue)
 
-**默认走 ADB/USB 链路**（延迟最低、不依赖路由器组播、边用边充电），
-WiFi 作为可选备选。
+Turn an old **Android 6.0+ (API 23)** tablet into a wired/wireless second display for your Mac — a lightweight, dependency-free receiver for the [OpenDisplay](https://github.com/peetzweg/opendisplay) protocol (wire protocol pv 3).
 
-基于 [peetzweg/opendisplay](https://github.com/peetzweg/opendisplay) 的
-**Wire Protocol pv 3**（`PROTOCOL.md`）从零实现的轻量接收端，
-不用 Kotlin / Jetpack Compose / AndroidX，因此能编译到 **minSdk 23**。
-
----
-
-## 一、先说清楚：为什么 ADB 链路不能只靠一条 adb 命令
-
-这是本项目最反直觉、也最容易踩空的地方，有三层：
-
-### ① 方向必须是 `forward`，不是 `reverse`
-
-协议规定 **接收端监听、发送端连入**（PROTOCOL.md §1）。
-安卓端监听 9000，Mac 要主动连它，方向是 **主机 → 设备**：
-
-| 命令 | 方向 | 用在这里对不对 |
-|---|---|---|
-| `adb forward tcp:9000 tcp:9000` | 主机 → 设备 | ✅ 正确 |
-| `adb reverse tcp:9000 tcp:9000` | 设备 → 主机 | ❌ 方向反了，链路不通 |
-
-> 常见混淆点：`reverse` 是给"设备访问 Mac 上的服务"用的
-> （比如安卓浏览器访问 Mac 本地起的 HTTP 服务）。这里需求相反。
-
-### ② Mac app 够不到安卓，需要补"最后一公里"
-
-官方 OpenDisplay Mac app 的两种发现方式都覆盖不到安卓：
-
-- **USB**：走 `usbmuxd` 枚举 iPhone —— 安卓不在其中
-- **WiFi**：走 Bonjour 自动发现 —— **没有手动输入 IP 的入口**
-
-所以 `adb forward` 把隧道打通后，还得让 Mac app "看得见"这个隧道入口。
-做法是在 **Mac 本机** 注册一个 Bonjour 代理服务，指向 `127.0.0.1:9000`：
-
-```bash
-dns-sd -P "Android-USB" _opensidecar._tcp local 9000 \
-       Android-USB.local 127.0.0.1 "id=<设备ID>" "pv=3"
-```
-
-> **IP 必须写 `127.0.0.1`，不能写 Mac 的局域网 IP。**
-> `adb forward` 在主机侧只监听回环地址，指向 `192.168.x.x:9000` 会连不上。
-
-### ③ ADB 模式下要关掉设备端 mDNS
-
-这是"ADB 优先"能不能真正生效的关键。
-如果设备继续广播 mDNS，Mac 的 Bonjour 浏览器会同时看到两个服务：
-
-| 服务 | 解析结果 | 走哪条路 |
-|---|---|---|
-| 设备自己广播的 | 设备真实 IP:9000 | **WiFi**（不是我们想要的） |
-| Mac 本地代理的 | 127.0.0.1:9000 | **USB 隧道**（想要） |
-
-它可能挑中前者，USB 隧道就白建了。
-所以 **ADB 模式下设备端保持静默**，只让 Mac 看到本地代理 → 强制走 USB。
+把一台老旧的 **Android 6.0+（API 23）** 平板变成 Mac 的扩展屏 —— 基于 [OpenDisplay](https://github.com/peetzweg/opendisplay) 协议（wire protocol pv 3）从零实现的轻量接收端，零第三方依赖。
 
 ---
 
-## 二、链路总览
+## Why this exists / 为什么有这个项目
 
-```
-Mac (发送端)                              Android 6.0 (接收端)
-────────────────────                      ────────────────────
-OpenDisplay app
-    │ 浏览 Bonjour
-    ↓ 发现 "Android-USB"
-连接 127.0.0.1:9000 ─────┐
-                          │  adb forward（USB 隧道）
-                          └──────────────→ 监听 TCP 9000
-                                              │ hello / ping
-                                              ↓ H.264 → MediaCodec → SurfaceView
-```
+Most modern second-display apps (Duet, Sidecar clones) dropped support for old Android tablets. The upstream OpenDisplay project is excellent but its Mac sender only auto-discovers Apple devices over USB (usbmuxd) — Android receivers need a little help to be found. This project is a **pure-Java receiver** that:
 
-两步都由 `tools/usb-link.sh` 自动完成。
+- compiles down to **minSdk 23** (no Kotlin / AndroidX / Compose — they require newer APIs),
+- stays discoverable over **both USB and WiFi at the same time**,
+- reports the device's **real physical resolution** with no artificial cap.
 
----
+如今主流的扩展屏应用早已放弃老旧安卓平板。上游 OpenDisplay 的 Mac 发送端只通过 usbmuxd 自动发现苹果设备，安卓接收端需要自己"被看见"。本项目是一个**纯 Java 接收端**：
 
-## 三、怎么用
+- 可编译到 **minSdk 23**（不用 Kotlin / AndroidX / Compose——它们要求更高的 API）；
+- **USB 与 WiFi 同时可被发现**，互不冲突；
+- 上报设备**真实物理分辨率**，不做人为限制。
 
-### 1. Mac 端准备
+## Features / 功能特性
 
-```bash
-brew install android-platform-tools
-```
-
-安卓端：**设置 → 关于 → 连点版本号** 开启开发者选项，
-再进 **开发者选项 → 打开 USB 调试**。
-
-### 2. 编译安装 APK
-
-推到 GitHub **公开**仓库，Actions 自动编译（约 3-5 分钟）：
-
-```bash
-git init && git add -A && git commit -m "OpenDisplay legacy receiver"
-git remote add origin git@github.com:<用户名>/opendisplay-android-legacy.git
-git push -u origin main
-```
-
-产出：**仓库 → Actions → 最新 workflow → Artifacts → `opendisplay-legacy-debug`**
-
-> **费用**：公开仓库 + `ubuntu-latest` 标准 runner = **免费、无限分钟**。
-> ⚠️ 别改成 `macos-*`：安卓 APK 不需要 macOS，且 macOS runner 在私有仓库
-> 按 **10 倍** 扣分钟。也别选 larger runner（那个始终收费）。
-
-装到设备：
-
-```bash
-adb install -r app-debug.apk
-```
-
-### 3. 一键建链
-
-```bash
-cd tools
-./usb-link.sh
-```
-
-脚本会自动：等设备上线 → 以 ADB 模式启动 App → `adb forward` →
-注册本地 Bonjour 代理。**保持窗口开着**（Ctrl+C 自动清理）。
-
-然后打开 Mac 上的 OpenDisplay，设备列表里点 **Android-USB** 即可。
-
-其他子命令：
-
-```bash
-./usb-link.sh --status   # 查看设备 / forward / Bonjour 状态
-./usb-link.sh --clean    # 清理 forward 与代理注册
-```
-
-### 4. 切到 WiFi（不需要 USB 时）
-
-App 底部有 **模式** 按钮，切到 WiFi 后会开启设备端 mDNS，
-Mac 直接就能发现 —— 此时**不需要**跑 `usb-link.sh`。
-
----
-
-## 四、自测（装真机前后都能跑）
-
-```bash
-# 协议算法：37 项
-python3 tools/test_protocol.py
-
-# 端到端：假 Mac 发送端 ↔ 模拟接收端
-python3 tools/test_e2e.py
-
-# usb-link.sh 链路脚本：12 项（mock adb/dns-sd，验证 forward 方向等）
-bash tools/test_usb_link.sh
-```
-
-### 用假发送端测真实设备
-
-`adb forward` 建好后，连 `127.0.0.1:9000` 就等于连到设备，
-所以不需要 Mac app 也能验证真机：
-
-```bash
-./usb-link.sh &          # 先建链
-
-ffmpeg -f lavfi -i testsrc=size=1280x720:rate=30 -t 15 \
-       -c:v libx264 -pix_fmt yuv420p -f h264 test.h264
-
-python3 tools/fake_sender.py 127.0.0.1 test.h264
-```
-
-看设备日志：
-
-```bash
-adb logcat -s ODService ODDecoder ODNsd ODMain
-```
-
----
-
-## 五、老设备适配要点
-
-1. **`maxEncodeWide/High` 必填**（§6.5）
-   老平板解码能力弱，若按面板分辨率推流会解不动，这里默认上限 1920×1080。
-2. **MediaCodec 用同步 API**，不用 `setCallback`（异步回调 API 21+，
-   同步模式全版本行为一致）。
-3. **不碰 `KEY_LOW_LATENCY`**（API 30+ 才有）。
-4. **前台服务分版本处理**：API 26+ 必须先建 NotificationChannel。
-5. **零外部依赖**：`org.json` / `MediaCodec` / `NsdManager` 均为 Android 内置，
-   编译快，也不会踩第三方库的最低 API 门槛。
-
----
-
-## 六、故障排查
-
-| 现象 | 排查 |
+| | |
 |---|---|
-| **Mac 列表里没有 Android-USB** | `./usb-link.sh --status` 看 forward 在不在；确认 Mac app 有「本地网络」权限；`dns-sd -B _opensidecar._tcp local` 看服务是否注册上 |
-| **连上但走的是 WiFi** | 确认 App 底部显示「模式: USB(ADB)」；设备端 mDNS 必须关闭 |
-| **连上后黑屏** | `adb logcat -s ODDecoder` 看有没有 `decoder started`；老设备可能挑 H.264 profile，调低 Mac 端画质 |
-| **几秒后断开** | ping 线程异常；确认没有 5s 以上静默 |
-| **画面卡住** | 会发 `kf` 请求关键帧；或 SPS 变化后解码器未重建 |
-| **`adb devices` 显示 unauthorized** | 设备上点「允许 USB 调试」 |
-| **forward 建不起来** | 端口被占：`./usb-link.sh --clean` 再试 |
+| 🔌 **USB mode (recommended)** | `adb forward` tunnel + Mac-side manual address → lowest latency, no WiFi needed, charges while in use. **USB 模式（推荐）**：`adb forward` 隧道 + Mac 端手动地址，延迟最低、不依赖 WiFi、边用边充电 |
+| 📶 **WiFi mode** | NSD/mDNS advertised **always on** — the Mac discovers the device on the local network by itself. **WiFi 模式**：NSD 广播常开，Mac 自动发现同网段设备 |
+| 🔁 **Failover hint** | If the USB tunnel drops, the device stays visible over WiFi; the Android notification tells you to switch. **断线兜底提示**：USB 隧道断开后设备在 WiFi 上仍然可见，安卓通知会提示切换 |
+| 🖥️ **Native resolution** | Hello reports the real panel size (via `getRealMetrics`) — no hardcoded resolution cap. **原生分辨率**：hello 报告真实物理分辨率，无写死上限 |
+| 🖱️ **Touch input** | Single tap / drag forwarded to the Mac as cursor events. **触摸回传**：单击/拖动转发为 Mac 光标事件 |
+| 🚀 **Boot autostart** | Starts listening after reboot (incl. EMUI quick-boot). **开机自启**：重启后自动开始监听（含 EMUI 快速启动） |
 
----
+## Requirements / 环境要求
 
-## 七、许可证
+- **Android**: 6.0 (API 23) or newer / 安卓 6.0 或更高
+- **Mac**: macOS with the official [OpenDisplay Mac app](https://github.com/peetzweg/opendisplay/releases) installed / 安装官方 OpenDisplay Mac 端
+- **adb** on the Mac for USB mode: `brew install android-platform-tools` / USB 模式需在 Mac 上安装 adb
+- On the tablet: Developer options → **USB debugging** enabled / 平板需开启开发者选项中的 USB 调试
 
-GPL-3.0，与上游 OpenDisplay 一致。分发修改版请同时开放源码。
-协议实现依据上游 `PROTOCOL.md`（pv 3）。
+## Installation / 安装
+
+Grab the latest APK from [**Releases**](../../releases), then:
+
+从 [**Releases**](../../releases) 下载最新 APK，然后：
+
+```bash
+adb install app-debug.apk
+# If upgrading from a differently-signed build / 如果从其他签名的旧版升级：
+adb uninstall org.opendisplay.legacy && adb install app-debug.apk
+```
+
+## Usage / 使用方法
+
+### Scenario A — USB (recommended) / 场景 A：USB 连接（推荐）
+
+The Mac sender cannot see Android devices over USB by itself (usbmuxd is Apple-only), so we bridge TCP through the USB cable. Mac 发送端无法通过 USB 直接发现安卓设备（usbmuxd 仅支持苹果设备），因此通过 USB 线桥接 TCP：
+
+```bash
+# 1. On the Mac: build the tunnel / 在 Mac 上建立隧道
+adb forward tcp:9000 tcp:9000
+
+# 2. Tell the Mac app where to find the device (one-time setup)
+#    告诉 Mac app 设备地址（一次性设置）
+defaults write com.peetzweg.opensidecar.mac host -string "127.0.0.1"
+defaults write com.peetzweg.opensidecar.mac port -int 9000
+#    Restart the Mac app / 重启 Mac 端 app
+```
+
+The Mac app now shows a **Manual (127.0.0.1:9000)** entry and connects automatically while the tunnel is up. Mac 端会出现 **Manual (127.0.0.1:9000)** 条目，隧道存在时自动连接。
+
+**One-click with macOS Shortcuts / 用 macOS 快捷指令一键建桥：**
+
+The bundled [`tools/usb_bridge_shortcut.applescript`](tools/usb_bridge_shortcut.applescript) checks for a connected device, builds the tunnel, and returns a ✅/❌ result. Steps / 步骤：
+
+1. Open **Shortcuts** → new shortcut → add **Run AppleScript** action / 打开快捷指令 → 新建 → 添加「运行 AppleScript」
+2. Paste the script / 粘贴脚本内容
+3. (Optional) add **Show Result** after it to see the outcome / （可选）后面加一步「显示结果」查看成功与否
+4. Pin it to the menu bar — one click sets up the USB bridge / 固定到菜单栏，一键建桥
+
+> ⚠️ Note the script hardcodes the adb path `/opt/homebrew/bin/adb` (Homebrew on Apple Silicon). Adjust the `adbPath` property if yours differs. / 注意脚本内 adb 路径默认为 Homebrew（Apple Silicon）位置，不同请修改 `adbPath`。
+
+### Scenario B — WiFi / 场景 B：WiFi 连接
+
+Both devices on the same network → the tablet advertises itself via mDNS **constantly** → the Mac app lists it automatically. Click to connect. No adb needed.
+
+两台设备在同一网络 → 平板持续通过 mDNS 广播 → Mac 端列表自动出现设备，点击连接即可，无需 adb。
+
+### Scenario C — USB with WiFi fallback / 场景 C：USB 为主，WiFi 兜底
+
+This is the intended daily setup: use USB daily; if the cable is unplugged, the tablet is still visible over WiFi — the Mac app lists the WiFi entry and you can click it to continue. When you plug the cable back and re-run the bridge script, the Mac reconnects over USB.
+
+这是推荐的日常形态：平时走 USB；拔线后平板在 WiFi 上仍然可见，Mac 列表出现 WiFi 条目，点一下即可继续；重新插线并运行建桥脚本后，Mac 会自动连回 USB。
+
+## How it works / 工作原理
+
+```
+Mac (sender)                                Android (receiver)
+────────────                                ──────────────────
+OpenDisplay app
+   │ dial 127.0.0.1:9000  ←── adb forward ──→  listens on TCP :9000
+   │   (USB tunnel)                               │  hello / ping
+   │                                              ▼
+   └── or dial <device-ip>:9000                H.264 → MediaCodec
+       (WiFi, auto-discovered)                 → SurfaceView + touch events back
+```
+
+- The **sender always dials; the receiver only listens** (protocol rule). / 协议规定发送端永远主动拨号、接收端只监听。
+- Keeping NSD advertising always-on is safe: the Mac deduplicates sessions and prefers the wired one. / NSD 广播常开是安全的：Mac 端会话去重时会优先保留有线会话。
+
+## Troubleshooting / 故障排查
+
+| Symptom / 现象 | Fix / 处理 |
+|---|---|
+| `INSTALL_FAILED_UPDATE_INCOMPATIBLE` | `adb uninstall org.opendisplay.legacy` first, then install / 先卸载再装（签名不一致） |
+| Mac shows "Waiting for receiver" on the Manual entry | Tunnel is down — run `adb forward tcp:9000 tcp:9000` or the Shortcuts script / 隧道未建立，重新建桥 |
+| Device not in the Mac's WiFi list | Both on the same network? Mac app needs **Local Network** permission / 确认同网段且 Mac 已授予「本地网络」权限 |
+| `adb devices` shows `unauthorized` | Accept the USB debugging prompt on the tablet / 在平板上点允许 USB 调试 |
+| Black screen after connect | Check `adb logcat -s ODService ODDecoder` / 查看设备日志 |
+| Status shows WiFi although USB cable is plugged | Tunnel not built — rebuild the bridge / 隧道未建立，重建即可 |
+
+## Build from source / 从源码构建
+
+```bash
+./gradlew assembleDebug
+# Requires JDK 17 + Android SDK (compileSdk 34)
+# 需要 JDK 17 + Android SDK（compileSdk 34）
+```
+
+CI builds automatically on every push (GitHub Actions, `ubuntu-latest`); the APK lands in the run's **Artifacts** as `opendisplay-legacy-debug`. 每次 push 后 CI 自动构建，APK 在 Actions 运行详情的 Artifacts 里（`opendisplay-legacy-debug`）。
+
+## Tested on / 已验证设备
+
+- Huawei tablet JDN-W09 · Android 6.0 (EMUI 4.x) — 1920×1200 panel, USB + WiFi + failover verified
+- 华为平板 JDN-W09 · Android 6.0（EMUI 4.x）——1920×1200 面板，USB / WiFi / 断线兜底均已实测
+
+## Credits / 致谢
+
+- [peetzweg/opendisplay](https://github.com/peetzweg/opendisplay) — protocol definition & official Mac sender / 协议定义与官方 Mac 发送端
+- [josepacelli/opendisplay-android](https://github.com/josepacelli/opendisplay-android) — reference receiver implementation / 参考接收端实现
+- [gprot42/android-opendisplay](https://github.com/gprot42/android-opendisplay) — reference "always listen + always advertise" design / 「常监听 + 常广播」设计参考
