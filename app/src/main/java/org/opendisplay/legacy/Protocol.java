@@ -1,5 +1,8 @@
 package org.opendisplay.legacy;
 
+// Copyright (c) 2026 JOJO587
+// SPDX-License-Identifier: MIT
+
 /**
  * OpenDisplay Wire Protocol (pv 3) — 纯 Java 实现，零外部依赖。
  *

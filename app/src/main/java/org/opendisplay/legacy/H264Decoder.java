@@ -1,5 +1,8 @@
 package org.opendisplay.legacy;
 
+// Copyright (c) 2026 JOJO587
+// SPDX-License-Identifier: MIT
+
 import android.media.MediaCodec;
 import android.media.MediaFormat;
 import android.os.Build;

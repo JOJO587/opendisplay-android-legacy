@@ -1,5 +1,8 @@
 package org.opendisplay.legacy;
 
+// Copyright (c) 2026 JOJO587
+// SPDX-License-Identifier: MIT
+
 import android.app.Activity;
 import android.content.Intent;
 import android.os.Bundle;

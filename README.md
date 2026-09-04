@@ -4,10 +4,15 @@
 [![Release](https://img.shields.io/github/v/release/JOJO587/opendisplay-android-legacy)](https://github.com/JOJO587/opendisplay-android-legacy/releases)
 ![Platform](https://img.shields.io/badge/platform-Android%206.0%2B-green)
 ![Deps](https://img.shields.io/badge/dependencies-zero-blue)
+![License](https://img.shields.io/badge/license-MIT-blue)
 
 Turn an old **Android 6.0 – 13** tablet into a wired/wireless second display for your Mac — a dependency-free receiver for the [OpenDisplay](https://github.com/peetzweg/opendisplay) protocol (pv 3).
 
 把一台老平板变成 Mac 的扩展屏。适用系统：**Android 6.0 到 13**；Android 14+ 暂不支持（需要声明前台服务类型，TODO 待补）。
+
+Licensed under [MIT](./LICENSE). Free to use, modify, and distribute.
+
+协议基于 [MIT](./LICENSE)。可自由使用、修改和分发。
 
 ---
 

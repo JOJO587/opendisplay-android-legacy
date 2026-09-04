@@ -1,5 +1,8 @@
 package org.opendisplay.legacy;
 
+// Copyright (c) 2026 JOJO587
+// SPDX-License-Identifier: MIT
+
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
