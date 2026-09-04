@@ -13,11 +13,30 @@ Turn an old **Android 6.0 – 13** tablet into a wired/wireless second display f
 
 ## Why This Project
 
-We had an Android 6 tablet sitting around. Looked on GitHub — every Open Display implementation we found required Android 8 at minimum. Nothing worked on 6.
+We had an Android 6 tablet sitting around. Looked on GitHub — every Open Display implementation we found required Android 8 at minimum. Nothing worked on 6. So we built one.
 
-So we built one.
+The OpenDisplay protocol itself is solid, but the Mac sender has two rough edges: USB discovery goes through usbmuxd, which doesn't list Android devices at all; WiFi discovery depends on Bonjour, but the Mac app has no manual IP field — if your device isn't actively broadcasting, it's invisible. This project solves both: old tablets get discovered and stay connected. Pure Java, no new API calls, runs on Android 6 out of the box.
 
-The OpenDisplay protocol itself is solid, but the Mac sender has two rough edges: USB discovery goes through usbmuxd, which doesn't list Android devices at all; WiFi discovery depends on Bonjour, but the Mac app has no manual IP field — if your device isn't actively broadcasting, it's invisible. This project solves both: **old tablets get discovered and stay connected**. Pure Java, no new API calls, runs on Android 6 out of the box.
+---
+
+## 为什么有这个项目
+
+我们有一台 Android 6 的平板。翻了 GitHub，所有 Open Display 实现都要求至少 Android 8。没有一个能在 6 上跑。所以我们自己写了一个。
+
+OpenDisplay 协议本身很成熟，但 Mac 发送端有两个坑：USB 发现走的是 usbmuxd，根本不在设备列表里；WiFi 发现依赖 Bonjour，但 Mac app 里没有手动输入 IP 的入口，设备不主动广播就永远找不到。这个项目把两个坑都填了：老平板能被发现了、能稳定连上了。纯 Java，不依赖任何新 API，Android 6 原生运行。
+
+---
+
+## Features
+
+| | |
+|---|---|
+| 🔌 **USB (Recommended)** | `adb forward` tunnel + Mac side hardcoded 127.0.0.1:9000 → lowest latency, charges while in use |
+| 📶 **WiFi** | mDNS broadcast always on; Mac app auto-discovers the device, zero setup |
+| 🔁 **Failover** | USB disconnects? WiFi connection stays alive — one click in the Mac list to resume |
+| 🖥️ **Native Resolution** | Reports real physical dimensions, no artificial 1920×1080 cap |
+| 🖱️ **Touch Backhaul** | Single-finger tap/drag forwarded as Mac cursor events |
+| 🚀 **Boot to Ready** | Starts listening on boot (including EMUI Quick Boot) |
 
 ---
 
@@ -34,6 +53,18 @@ The OpenDisplay protocol itself is solid, but the Mac sender has two rough edges
 
 ---
 
+## Environment
+
+| Item | Requirement |
+|---|---|
+| Android | **6.0 – 13** (API 23–33) |
+| Android 14+ | ⚠️ Not supported — will crash on launch (TODO: add foregroundServiceType declaration) |
+| Mac | Install official [OpenDisplay Mac sender](https://github.com/peetzweg/opendisplay/releases) |
+| USB mode extra | Install adb on Mac: `brew install android-platform-tools` |
+| Tablet | Developer Options → USB Debugging enabled |
+
+---
+
 ## 环境要求
 
 | 项目 | 要求 |
@@ -43,6 +74,19 @@ The OpenDisplay protocol itself is solid, but the Mac sender has two rough edges
 | Mac | 安装官方 [OpenDisplay Mac 端](https://github.com/peetzweg/opendisplay/releases)，macOS |
 | USB 模式额外需要 | Mac 上装 adb：`brew install android-platform-tools` |
 | 平板端 | 开发者选项 → 开启 USB 调试 |
+
+---
+
+## Installation
+
+Download the latest APK from [**Releases**](../../releases):
+
+```bash
+adb install app-debug.apk
+
+# Upgrading from a different signing key: uninstall first (signature mismatch → INSTALL_FAILED_UPDATE_INCOMPATIBLE)
+adb uninstall org.opendisplay.legacy && adb install app-debug.apk
+```
 
 ---
 
@@ -56,6 +100,43 @@ adb install app-debug.apk
 # 从其他签名版本升级要先卸载（签名不一致会报 INSTALL_FAILED_UPDATE_INCOMPATIBLE）
 adb uninstall org.opendisplay.legacy && adb install app-debug.apk
 ```
+
+---
+
+## Usage
+
+### Scenario A — USB (Daily Driver)
+
+The Mac OpenDisplay app doesn't know Android devices exist. You need a TCP tunnel inside the USB cable:
+
+```bash
+# Step 1: create the tunnel on Mac
+adb forward tcp:9000 tcp:9000
+
+# Step 2: tell the Mac app where to find the device (one-time)
+defaults write com.peetzweg.opensidecar.mac host -string "127.0.0.1"
+defaults write com.peetzweg.opensidecar.mac port -int 9000
+# Then restart the OpenDisplay app on Mac
+```
+
+A **Manual (127.0.0.1:9000)** entry will appear in the Mac app and auto-connect whenever the tunnel is up.
+
+Tired of typing that every time? There's a ready-made AppleScript shortcut at [`tools/usb_bridge_shortcut.applescript`](tools/usb_bridge_shortcut.applescript) — paste it into macOS Shortcuts App, one click to detect, bridge, and verify:
+
+1. Shortcuts → New → Add "Run AppleScript"
+2. Paste the script
+3. (Optional) Add a "Show Result" step to see success/failure
+4. Pin to menu bar, use whenever needed
+
+> ⚠️ The script uses the Apple Silicon Homebrew path for adb (`/opt/homebrew/bin/adb`). Intel Mac or custom path: change the `adbPath` variable at the top of the script.
+
+### Scenario B — WiFi (Cable-Free)
+
+Tablet and Mac on the same network → tablet continuously broadcasts mDNS → Mac app auto-discovers it. Click to connect, nothing else needed.
+
+### Scenario C — USB Primary, WiFi Failover (Recommended Daily Setup)
+
+Use USB for lowest latency and charging. If the cable gets pulled, the WiFi entry in the Mac list is still there — click it and you're back. Plug the cable back in, run the bridge script, Mac switches back to USB. No app restart, no reconnection dance.
 
 ---
 
@@ -96,6 +177,23 @@ Mac app 里会出现一个 **Manual (127.0.0.1:9000)** 条目，隧道在的时�
 
 ---
 
+## How It Works
+
+```
+Mac (Sender)                                  Android (Receiver)
+────────────                                  ──────────────────
+OpenDisplay app
+   │ dials 127.0.0.1:9000 ←── adb forward ──→  listens on TCP :9000
+   │   (USB tunnel)                               │  hello / ping
+   │                                              ▼
+   └── or dials <device IP>:9000             H.264 → MediaCodec
+       (WiFi, Bonjour auto-discover)              → SurfaceView + touch backhaul
+```
+
+One line: **the sender dials, the receiver just listens**.
+
+---
+
 ## 工作原理
 
 ```
@@ -113,6 +211,19 @@ OpenDisplay app
 
 ---
 
+## Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| APK won't install, says `INSTALL_FAILED_UPDATE_INCOMPATIBLE` | Run `adb uninstall org.opendisplay.legacy` first, then install |
+| Manual entry in Mac app spins forever "Waiting for receiver" | Tunnel is down — rerun the Shortcuts script or type `adb forward tcp:9000 tcp:9000` |
+| Device doesn't appear in Mac WiFi list | Confirm tablet and Mac are on the same subnet; grant Mac app "Local Network" permission |
+| `adb devices` shows `unauthorized` | Tap "Allow USB Debugging" on the tablet screen |
+| Connected but black screen | Check logs: `adb logcat -s ODService ODDecoder` |
+| Cable plugged in but status shows WiFi | Tunnel wasn't established, rerun it |
+
+---
+
 ## 故障排查
 
 | 现象 | 处理 |
@@ -126,6 +237,16 @@ OpenDisplay app
 
 ---
 
+## Build from Source
+
+```bash
+./gradlew assembleDebug
+```
+
+Requires JDK 17 + Android SDK (compileSdk 34). CI runs on every push; the APK is in the Actions run's **Artifacts** section, named `opendisplay-legacy-debug`.
+
+---
+
 ## 从源码构建
 
 ```bash
@@ -136,11 +257,27 @@ OpenDisplay app
 
 ---
 
+## Verified Devices
+
+| Device | OS | Status |
+|---|---|---|
+| Huawei Tablet JDN-W09 | Android 6.0 (EMUI 4.x) | 1920×1200 panel, USB / WiFi / failover all实测 ✅ |
+
+---
+
 ## 已验证设备
 
 | 设备 | 系统 | 状态 |
 |---|---|---|
 | 华为平板 JDN-W09 | Android 6.0（EMUI 4.x）| 1920×1200 面板，USB / WiFi / 断线兜底均已实测 ✅ |
+
+---
+
+## Credits
+
+- [peetzweg/opendisplay](https://github.com/peetzweg/opendisplay) — Protocol definition & official Mac sender
+- [josepacelli/opendisplay-android](https://github.com/josepacelli/opendisplay-android) — Reference receiver implementation
+- [gprot42/android-opendisplay](https://github.com/gprot42/android-opendisplay) — "Always listen + always broadcast" design reference
 
 ---
 
