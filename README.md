@@ -107,7 +107,7 @@ adb uninstall org.opendisplay.legacy && adb install app-debug.apk
 
 ### Scenario A — USB (Daily Driver)
 
-The Mac OpenDisplay app doesn't know Android devices exist. You need a TCP tunnel inside the USB cable:
+The Mac OpenDisplay app doesn't know Android devices exist. You need a TCP tunnel inside the USB cable. Make sure **ADB (USB Debugging) is enabled** on the tablet first (`Settings → Developer Options → USB Debugging`).
 
 ```bash
 # Step 1: create the tunnel on Mac
@@ -144,7 +144,7 @@ Use USB for lowest latency and charging. If the cable gets pulled, the WiFi entr
 
 ### 场景 A — USB（日常主力）
 
-Mac 的 OpenDisplay app 不认识安卓设备，需要在 USB 线里架一层 TCP 隧道：
+Mac 的 OpenDisplay app 不认识安卓设备，需要在 USB 线里架一层 TCP 隧道。先确认平板端**已开启 ADB（USB 调试）**（设置 → 开发者选项 → USB 调试）。
 
 ```bash
 # 第一步：在 Mac 上建隧道
